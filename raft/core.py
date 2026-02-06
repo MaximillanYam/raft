@@ -16,8 +16,9 @@ class CoreRaft:
     def __init__(self, node_id, peers, database_path): 
         min_timeout = .150 
         max_timeout = .300
+        heartbeat_interval = .05
         self.raft_timer = RaftTimer(self.on_election_timeout, min_timeout, max_timeout)
-        self.heartbeat_timer = RaftTimer()
+        self.heartbeat_timer = RaftTimer(self.send_heartbeats, heartbeat_interval, heartbeat_interval)
         self.storage = FileStorage(database_path)
         self.node_id = node_id 
         self.peers = peers
@@ -35,6 +36,7 @@ class CoreRaft:
         self.next_index = {} 
         self.match_index = {}
 
+    # Timer call backs
     async def on_election_timeout(self):
         self.votes.clear()
         self.term += 1 
@@ -48,8 +50,12 @@ class CoreRaft:
 
         await self.request_vote(last_log_index, last_log_term) 
 
+    async def send_heartbeats(self):
+        if self.status == Status.leader: 
+            await self.append_entries([])
+
     # Helper functions 
-    def _validate_term(self, incoming_term): 
+    def validate_term(self, incoming_term): 
         if incoming_term > self.term: 
             self.term = incoming_term 
             self.voted_for = None 
@@ -60,6 +66,9 @@ class CoreRaft:
                 self.raft_timer.reset()
             return True 
         return False
+    
+    def transition_to_leader(self):
+        pass
 
     # request vote rpc 
     async def request_vote(self, last_log_index, last_log_term): 
@@ -83,6 +92,14 @@ class CoreRaft:
 
                 append_entries_message = message.AppendEntriesMessage(self.term, self.node_id, prev_log_index, prev_log_term, self.commit_index, log_entries)
                 await self.outgoing_messages.put((peer, append_entries_message))
+    
+    # handle incoming request vote rpc
+    def handle_request_vote(self, incoming_request_vote_message):
+        pass
+
+    # handle incoming append entry rpc
+    def handle_append_entries(self): 
+        pass
 
     # handle response to request vote rpc 
     def handle_request_vote_response(self): 
@@ -92,14 +109,7 @@ class CoreRaft:
     def handle_append_entries_response(self): 
         pass
 
-    # handle incoming request vote rpc
-    def handle_request_vote(self):
-        pass 
-
-    # handle incoming append entry rpc
-    def handle_append_entries(self): 
-        pass
-
+    
 
 
     
