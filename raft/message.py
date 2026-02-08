@@ -30,7 +30,8 @@ class AppendEntriesMessage:
 @dataclass 
 class AppendEntriesResponse: 
     term : int
-    success : bool 
+    success : bool
+    match_index : int 
 
 def main(): 
     log_entry_1 = LogEntry(0, 0, 'Insert into database1')
