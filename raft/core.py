@@ -94,25 +94,71 @@ class CoreRaft:
                 append_entries_message = message.AppendEntriesMessage(self.term, self.node_id, prev_log_index, prev_log_term, self.commit_index, log_entries)
                 await self.outgoing_messages.put((peer, append_entries_message))
     
-    # handle incoming request vote rpc
     def handle_request_vote(self, incoming_request_vote_message):
-        self.validate_term(incoming_request_vote_message.term)
+        self.valid_term(incoming_request_vote_message.term)
         
-        if incoming_request_vote_message.term >= self.term:
-            node_last_log_index = self.storage.last_index()
-            node_last_log_term = self.storage.last_term()
-            if self.voted_for is None or self.voted_for == incoming_request_vote_message.candidate_id: 
-                if (incoming_request_vote_message.last_log_term > node_last_log_term) or (incoming_request_vote_message.last_log_term == node_last_log_term and incoming_request_vote_message.last_log_index >= node_last_log_index):
-                    self.voted_for = incoming_request_vote_message.candidate_id
-                    self.storage.save_metadata(self.term, self.voted_for) 
-                    self.raft_timer.reset()
-                    return message.RequestVoteResponse(self.term, True) 
+        if incoming_request_vote_message.term < self.term:
+            return message.RequestVoteResponse(self.term, False)
         
-        return message.RequestVoteResponse(self.term, False)
+        if self.voted_for is not None and self.voted_for != incoming_request_vote_message.candidate_id:
+            return message.RequestVoteResponse(self.term, False)
+        
+        node_last_log_index = self.storage.last_index()
+        node_last_log_term = self.storage.last_term()
+        
+        candidate_log_outdated = (
+            incoming_request_vote_message.last_log_term < node_last_log_term or
+            (incoming_request_vote_message.last_log_term == node_last_log_term and 
+            incoming_request_vote_message.last_log_index < node_last_log_index)
+        )
+        
+        if candidate_log_outdated:
+            return message.RequestVoteResponse(self.term, False)
+        
+        self.voted_for = incoming_request_vote_message.candidate_id
+        self.storage.save_metadata(self.term, self.voted_for)
+        self.raft_timer.reset()
+        return message.RequestVoteResponse(self.term, True)
 
     # handle incoming append entry rpc
     def handle_append_entries(self, incoming_append_entries_message): 
-        pass
+        self.valid_term(incoming_append_entries_message.term) 
+
+        if incoming_append_entries_message.term < self.term:
+            return message.AppendEntriesResponse(self.term, False) 
+
+        if self.status == Status.candidate: 
+            self.status = Status.follower
+
+        self.raft_timer.reset()
+
+        if incoming_append_entries_message.prev_log_index != 0: 
+            node_entry = self.storage.get_entry(incoming_append_entries_message.prev_log_index) 
+            if node_entry is None: 
+                return message.AppendEntriesResponse(self.term, False) 
+            if node_entry.term != incoming_append_entries_message.prev_log_term:
+                return message.AppendEntriesResponse(self.term, False)
+            
+        
+        for index, entry in enumerate(incoming_append_entries_message.entries):
+            node_entry = self.storage.get_entry(entry.index)
+            if node_entry is None: 
+                self.storage.append_entries(incoming_append_entries_message.entries[index:])
+                break 
+            else:
+                if node_entry.term == entry.term:
+                    continue
+                else:
+                    self.storage.delete_from_index(entry.index)
+                    self.storage.append_entries(incoming_append_entries_message.entries[index:])
+                    break
+
+        self.commit_index = min(incoming_append_entries_message.leader_commit, incoming_append_entries_message.entries[-1].index)
+
+        return message.AppendEntriesResponse(self.term, True)
+        
+
+            
 
     # handle response to request vote rpc 
     def handle_request_vote_response(self, incoming_request_vote_response): 
