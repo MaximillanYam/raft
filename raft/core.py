@@ -2,7 +2,7 @@ from .timer import RaftTimer
 from .filestorage import FileStorage 
 from enum import Enum
 import asyncio
-import message
+from . import message
 
 class CoreFailure(Exception): 
     pass
@@ -189,7 +189,10 @@ class CoreRaft:
         
         if incoming_request_vote_response.term != self.term:
             return 
-        
+
+        if not incoming_request_vote_response.vote_granted:
+            return
+
         self.votes.add(peer_id)
 
         if len(self.votes) >= (len(self.peers) + 1) // 2 + 1: 
